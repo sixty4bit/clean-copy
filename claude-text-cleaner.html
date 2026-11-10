@@ -314,6 +314,16 @@
   const optJoinLines = document.getElementById('opt-join-lines');
   const optPreserveCode = document.getElementById('opt-preserve-code');
 
+  // Remove the indent all non-blank lines share, keeping relative nesting.
+  // Skip line 1: terminal selections often start mid-line with no indent.
+  function dedent(lines) {
+    const rest = lines.slice(1).filter(l => l.trim());
+    const indents = (rest.length ? rest : lines.filter(l => l.trim()))
+      .map(l => l.match(/^[ \t]*/)[0].length);
+    const min = indents.length ? Math.min(...indents) : 0;
+    return lines.map(l => l.slice(Math.min(min, l.match(/^[ \t]*/)[0].length)));
+  }
+
   function cleanText(raw) {
     const stripSpaces = optStripSpaces.checked;
     const joinLines = optJoinLines.checked;
@@ -324,7 +334,7 @@
     let lines = raw.split('\n');
 
     if (stripSpaces) {
-      lines = lines.map(l => l.replace(/^\s+/, ''));
+      lines = dedent(lines);
     }
 
     // Strip Claude Code's leading bullet marker (⏺ U+23FA or similar)
@@ -348,7 +358,8 @@
 
     for (let i = 0; i < lines.length; i++) {
       const line = lines[i];
-      const trimmed = line.trimEnd();
+      const indent = line.match(/^[ \t]*/)[0];
+      const trimmed = line.trim();
 
       if (preserveCode && /^```/.test(trimmed)) {
         flushBuffer();
@@ -386,22 +397,30 @@
         continue;
       }
 
-      const isStructural =
+      // Isolated structural lines (headings, rules, blockquotes, ALL CAPS labels)
+      const isIsolated =
         /^#{1,6}\s/.test(trimmed) ||
-        /^[-*+]\s/.test(trimmed) ||
-        /^\d+[.)]\s/.test(trimmed) ||
         /^>\s?/.test(trimmed) ||
         /^[-*_]{3,}\s*$/.test(trimmed) ||
         /^[A-Z][A-Z\s]{4,}:?\s*$/.test(trimmed);
 
-      if (isStructural) {
+      if (isIsolated) {
         flushBuffer();
         result.push(trimmed);
         continue;
       }
 
+      // List items start a new paragraph but allow continuation lines to join
+      const isListItem =
+        /^[-*+]\s/.test(trimmed) ||
+        /^\d+[.)]\s/.test(trimmed);
+
+      if (isListItem) {
+        flushBuffer();
+      }
+
       if (buffer === '') {
-        buffer = trimmed;
+        buffer = isListItem ? indent + trimmed : trimmed;
       } else {
         buffer += ' ' + trimmed;
       }
